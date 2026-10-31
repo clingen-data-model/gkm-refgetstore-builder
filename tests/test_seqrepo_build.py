@@ -199,17 +199,110 @@ def test_the_full_manifest_matches_the_store(aliased) -> None:
     assert seqrepo_build.check_store_scope(store, expected) == []
 
 
-@needs_bgzip
-def test_a_sequence_seqrepo_would_renormalize_is_refused(tmp_path: Path) -> None:
+def test_the_alias_map_matches_the_reverse_lookup(aliased) -> None:
     from gtars.refget import RefgetStore
 
-    store = RefgetStore.on_disk(str(tmp_path / "store"))
+    store_dir, _, _, _ = aliased
+    store = RefgetStore.open_local(str(store_dir))
+    alias_map = seqrepo_build.store_alias_map(store)
+    digests = store_census.sequence_digests(store)
+    assert set(alias_map) == digests
+    for digest in digests:
+        assert alias_map[digest] == sorted(store.get_aliases_for_sequence(digest))
+    nc1 = _digest(store, "refseq", "NC_000001.11")
+    assert seqrepo_build.store_aliases(alias_map, nc1) == [
+        {"namespace": "GRCh38", "alias": "1"},
+        {"namespace": "GRCh38", "alias": "CM000663.2"},
+        {"namespace": "GRCh38", "alias": "chr1"},
+        {"namespace": "insdc", "alias": "CM000663.2"},
+        {"namespace": "refseq", "alias": "NC_000001.11"},
+    ]
+    assert seqrepo_build.store_aliases(alias_map, "not-a-digest") == []
+
+
+PEP = [
+    ("ENSP1.1", "MKTAYIAKQ*"),      # seqrepo strips the '*': it would be ENSP2.1
+    ("ENSP2.1", "MKTAYIAKQ"),
+    ("ENSP3.1", "MKTAY*IAKQRQ"),
+    ("GAPPED", "ACGT-ACGT.N"),      # seqrepo refuses what is not A-Z
+]
+
+
+@pytest.fixture
+def pep_store(tmp_path: Path):
+    """A store whose sequences seqrepo partly cannot hold: ``(store, digests)``."""
+    from gtars.refget import RefgetStore
+
+    store_dir = tmp_path / "store"
+    store = RefgetStore.on_disk(str(store_dir))
     store.set_quiet(True)
-    store.add_sequence_collection_from_fasta(
-        str(write_fasta(tmp_path / "pep.fa", [("ENSP1.1", "MKTAYIAKQ*")])))
+    pep, _ = store.add_sequence_collection_from_fasta(
+        str(write_fasta(tmp_path / "pep.fa", PEP)))
+    digests = {name: store.get_sequence_by_name(pep.digest, name).metadata.sha512t24u
+               for name, _ in PEP}
+    for name, digest in digests.items():
+        store.add_sequence_alias("ensembl", name, digest)
+    store.write()
+    return RefgetStore.open_local(str(store_dir)), digests
+
+
+@needs_bgzip
+def test_sequences_seqrepo_cannot_hold_are_left_out(pep_store, tmp_path: Path) -> None:
+    store, digests = pep_store
     lib = seqrepo_build.require_seqrepo()
+    instance = tmp_path / "sr"
+    stats = seqrepo_build.write_instance(lib, store, instance)
+
+    assert stats.sequences == 1
+    left_out = {s["digest"]: s for s in stats.skipped}
+    assert set(left_out) == {digests["ENSP1.1"], digests["ENSP3.1"], digests["GAPPED"]}
+    star = left_out[digests["ENSP1.1"]]
+    assert (star["cause"], star["characters"], star["aliases"]) == ("renamed", "*", 1)
+    # Stripped of its '*', ENSP1.1 is ENSP2.1, which keeps only its own alias.
+    assert star["seqrepo_seq_id"] == digests["ENSP2.1"]
+    gapped = left_out[digests["GAPPED"]]
+    assert (gapped["cause"], gapped["characters"], gapped["seqrepo_seq_id"]) == (
+        "rejected", "-.", None)
+    assert seqrepo_build.skipped_by_cause(stats.skipped) == {
+        "renamed '*'": 2, "rejected '-.'": 1}
+
+    sr = _open(instance)
+    assert {r["seq_id"] for r in sr.sequences} == {digests["ENSP2.1"]}
+    assert {(r["namespace"], r["alias"]) for r in sr.aliases.find_aliases(
+        seq_id=digests["ENSP2.1"]) if r["namespace"] == "ensembl"} == {
+        ("ensembl", "ENSP2.1")}
+    verified = seqrepo_build.verify_instance(lib, store, instance)
+    assert verified.ok, verified.problems
+    assert verified.counts["store_sequences_left_out"] == 3
+    assert verified.counts["store_aliases_left_out"] == 3
+
+
+@needs_bgzip
+def test_verify_finds_a_left_out_alias_on_the_renamed_sequence(
+        pep_store, tmp_path: Path) -> None:
+    store, digests = pep_store
+    lib = seqrepo_build.require_seqrepo()
+    instance = tmp_path / "sr"
+    seqrepo_build.write_instance(lib, store, instance)
+    sr = _open(instance, writeable=True)
+    sr.aliases.store_alias(seq_id=digests["ENSP2.1"], namespace="ensembl", alias="ENSP1.1")
+    sr.commit()
+    del sr
+    (problem,) = seqrepo_build.verify_instance(lib, store, instance).problems
+    assert problem.startswith("1 alias(es) only in the seqrepo")
+
+
+@needs_bgzip
+def test_a_sequence_filed_under_another_digest_still_stops_the_build(
+        pep_store, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    store, digests = pep_store
+    lib = seqrepo_build.require_seqrepo()
+    # A seq_id function that disagrees with store() lets ENSP1.1 through.
+    fooled = replace(lib, seq_id=lambda seq: digests[{s: n for n, s in PEP}[seq]])
     with pytest.raises(RuntimeError, match="did not file sequence"):
-        seqrepo_build.write_instance(lib, store, tmp_path / "sr")
+        seqrepo_build.write_instance(fooled, store, tmp_path / "sr")
 
 
 @needs_bgzip

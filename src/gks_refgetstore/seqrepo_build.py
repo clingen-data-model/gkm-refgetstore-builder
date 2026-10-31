@@ -14,6 +14,15 @@ alias rows, and adds its digest aliases (``VMC``, ``MD5``, ``SHA1``,
 ``SEGUID``). This module only decides which aliases each sequence gets, and
 checks that seqrepo filed each sequence under the store's digest.
 
+Seqrepo cannot hold every store sequence under the store's digest:
+``store()`` derives the ``seq_id`` from a normalized copy of the sequence
+(bioutils removes whitespace and ``*`` and uppercases) and rejects what is not
+A-Z after that. Before each ``store()``, the sequence is passed to the function
+``store()`` itself uses for the ``seq_id``. A sequence it renames or rejects is
+left out, with its aliases, and recorded in the provenance with the characters
+outside A-Z that it contains. The rule is seqrepo's, so a change to its
+normalization changes what is left out, and the record says why.
+
 Namespaces are passed under the store's own names. Seqrepo's namespace
 translation stores ``refseq`` as ``NCBI`` and ``lrg`` as ``LRG``; ``insdc`` and
 the assembly namespaces (``GRCh38``, ``GRCh38.p14``, ``NCBI36``, ...) are
@@ -32,9 +41,11 @@ instance writeable, in place, and passes to ``store()`` only the store
 sequences it lacks or holds without some of the store's aliases; seqrepo writes
 them to a new bgzip file and leaves the existing files as they are. Clone the
 instance first (``cp -c -R`` on APFS) to keep the original. Verification checks, in both directions, that the
-sequence sets are equal, that every sequence read back from SeqRepo hashes to
-its ``seq_id`` and has the store's length and MD5, and that the alias sets are
-equal. A provenance record is written beside the instance as
+sequence sets are equal apart from the sequences seqrepo cannot hold, that
+every sequence read back from SeqRepo hashes to its ``seq_id`` and has the
+store's length and MD5, and that the alias sets are equal apart from those
+sequences' aliases. It finds the sequences left out with the same rule, not
+from the write's record. A provenance record is written beside the instance as
 ``<instance>.provenance.json``; nothing outside the seqrepo library writes
 inside the instance directory.
 
@@ -48,9 +59,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import string
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import metadata
@@ -72,6 +85,9 @@ PROGRESS_EVERY_RESIDUES = 500_000_000
 # commit (up to 1e9 residues).
 BYTES_PER_RESIDUE = 0.3
 COMMIT_SCRATCH_GIB = 1.5
+# Page cache for seqrepo's alias database while writing (sqlite's default is
+# 2 MB). The full store's alias database grows to several GB.
+ALIAS_DB_CACHE_KIB = 4 * 2**20
 
 
 @dataclass
@@ -82,6 +98,8 @@ class SeqRepoLib:
     validate_aliases: object
     bgzip: str
     bgzip_version: str
+    # The function SeqRepo.store() computes a sequence's seq_id with.
+    seq_id: Callable[[str], str]
 
 
 def require_seqrepo() -> SeqRepoLib:
@@ -89,6 +107,7 @@ def require_seqrepo() -> SeqRepoLib:
     try:
         from biocommons.seqrepo import SeqRepo
         from biocommons.seqrepo.fastadir import fabgz
+        from biocommons.seqrepo.seqrepo import sha512t24u as seq_id
         from biocommons.seqrepo.utils import validate_aliases
     except ImportError as exc:
         raise SystemExit(
@@ -102,7 +121,7 @@ def require_seqrepo() -> SeqRepoLib:
         raise SystemExit(
             f"seqrepo needs htslib's bgzip on PATH (or SEQREPO_BGZIP_PATH): {exc}"
         ) from exc
-    return SeqRepoLib(SeqRepo, validate_aliases, exe, version)
+    return SeqRepoLib(SeqRepo, validate_aliases, exe, version, seq_id)
 
 
 # ------------------------------------------------------------------ preflight
@@ -163,20 +182,57 @@ class WriteStats:
     aliases_added: int = 0      # store aliases added (seqrepo's digest aliases excluded)
     residues: int = 0           # residues passed to store()
     aliases_by_namespace: Counter = field(default_factory=Counter)
+    skipped: list[dict] = field(default_factory=list)  # sequences seqrepo cannot hold
     seconds: float = 0.0
 
 
-def store_aliases(store, digest: str) -> list[dict[str, str]]:
+def seqrepo_divergence(lib: SeqRepoLib, seq: str, digest: str) -> dict | None:
+    """Why ``store()`` would not file ``seq`` under ``digest``; None if it would.
+
+    ``renamed``: seqrepo's normalization changes the sequence, so its
+    ``seq_id`` differs. ``rejected``: seqrepo refuses the sequence. Either way
+    ``characters`` lists what in it is not A-Z.
+    """
+    try:
+        seq_id = lib.seq_id(seq)
+    except RuntimeError as exc:
+        cause, seq_id, error = "rejected", None, str(exc)
+    else:
+        if seq_id == digest:
+            return None
+        cause, error = "renamed", None
+    return {"digest": digest, "cause": cause, "seqrepo_seq_id": seq_id, "error": error,
+            "characters": "".join(sorted(set(seq) - set(string.ascii_uppercase))),
+            "length": len(seq)}
+
+
+def store_alias_map(store) -> dict[str, list[tuple[str, str]]]:
+    """``digest -> sorted [(namespace, alias), ...]`` for every store sequence alias.
+
+    One forward pass over the alias namespaces. The store's reverse lookup,
+    ``get_aliases_for_sequence``, scans the whole alias index on every call:
+    ~55 ms each on the full store, ~29 h for its 1.9M sequences.
+    """
+    by_digest: dict[str, list[tuple[str, str]]] = {}
+    for ns, alias, digest in _iter_store_aliases(store):
+        by_digest.setdefault(digest, []).append((ns, alias))
+    for pairs in by_digest.values():
+        pairs.sort()
+    return by_digest
+
+
+def store_aliases(alias_map: dict[str, list[tuple[str, str]]],
+                  digest: str) -> list[dict[str, str]]:
     """The store's sequence aliases for ``digest``, in seqrepo's ``nsaliases`` form."""
-    pairs = store.get_aliases_for_sequence(digest) or []
-    return [{"namespace": ns, "alias": alias} for ns, alias in sorted(pairs)]
+    return [{"namespace": ns, "alias": alias} for ns, alias in alias_map.get(digest, ())]
 
 
-def digests_to_add(store, sr) -> list[str]:
+def digests_to_add(store, sr, alias_map: dict[str, list[tuple[str, str]]]) -> list[str]:
     """Store sequences the instance lacks, or holds without all their aliases."""
     missing = {d for d in store_census.sequence_digests(store) if d not in sr.sequences}
     sr_triples, _, _ = _seqrepo_alias_triples(sr)
-    lacking = {d for _, _, d in _store_alias_triples(store) - sr_triples}
+    lacking = {d for d, pairs in alias_map.items()
+               if any((ns, alias, d) not in sr_triples for ns, alias in pairs)}
     return sorted(missing | lacking)
 
 
@@ -187,30 +243,53 @@ def write_instance(lib: SeqRepoLib, store, instance_dir: Path, *,
     By default the instance is new and every sequence is stored. With
     ``add_missing``, the instance already exists and only the sequences it
     lacks, or holds without some of the store's aliases, are passed to
-    ``store()``, which adds only what is not already there.
+    ``store()``, which adds only what is not already there. Sequences seqrepo
+    would rename or reject are left out and listed in ``skipped``.
     """
     stats = WriteStats()
     started = time.monotonic()
     next_report = PROGRESS_EVERY_RESIDUES
     sr = lib.SeqRepo(str(instance_dir), writeable=True)
+    # Each alias row updates four indexes in no useful key order. With the
+    # default cache, once the database outgrows it nearly every insert reads
+    # index pages back from disk, and the write slows as the database grows.
+    # A connection setting only; seqrepo still writes every row.
+    sr.aliases._db.execute(f"pragma cache_size = -{ALIAS_DB_CACHE_KIB}")
+    alias_map = store_alias_map(store)
+    logger.info("read %d store alias(es) for %d sequence(s) in %.0fs",
+                sum(map(len, alias_map.values())), len(alias_map),
+                time.monotonic() - started)
     if add_missing:
-        digests = digests_to_add(store, sr)
+        digests = digests_to_add(store, sr, alias_map)
         logger.info("%d store sequence(s) to add or complete", len(digests))
     else:
         digests = sorted(store_census.sequence_digests(store))
+    # Progress rates count from here, excluding the alias read.
+    writing = time.monotonic()
     for digest in digests:
         present = add_missing and digest in sr.sequences
-        nsaliases = store_aliases(store, digest)
+        nsaliases = store_aliases(alias_map, digest)
         lib.validate_aliases(nsaliases)
         seq = "".join(store_census.stream_sequence_chunks(store, digest))
-        n_added, n_aliases = sr.store(seq, nsaliases)
         # store() files the sequence under seqrepo's own digest of it. For the
-        # instance to mirror the store, that must be the store's digest.
+        # instance to mirror the store, that must be the store's digest; a
+        # sequence it would file under another, or refuse, is left out.
+        divergence = seqrepo_divergence(lib, seq, digest)
+        if divergence is not None:
+            divergence["aliases"] = len(nsaliases)
+            stats.skipped.append(divergence)
+            logger.warning("left out %s: seqrepo %s it (characters %r: %s), with "
+                           "its %d alias(es)", digest, divergence["cause"],
+                           divergence["characters"],
+                           divergence["seqrepo_seq_id"] or divergence["error"],
+                           len(nsaliases))
+            del seq
+            continue
+        n_added, n_aliases = sr.store(seq, nsaliases)
         if n_added != (0 if present else 1) or digest not in sr.sequences:
             raise RuntimeError(
                 f"seqrepo did not file sequence {digest} under that digest "
-                f"(added {n_added}); its normalization (uppercase, '*' removed) "
-                "changes this sequence"
+                f"(added {n_added})"
             )
         if present:
             stats.completed += 1
@@ -221,7 +300,7 @@ def write_instance(lib: SeqRepoLib, store, instance_dir: Path, *,
         stats.aliases_by_namespace.update(a["namespace"] for a in nsaliases)
         del seq
         if stats.residues >= next_report:
-            elapsed = time.monotonic() - started
+            elapsed = time.monotonic() - writing
             logger.info("stored %d/%d sequences, %.2f Gbp, %.0fs (%.1f Mbp/s)",
                         stats.sequences, len(digests), stats.residues / 1e9,
                         elapsed, stats.residues / max(elapsed, 1e-9) / 1e6)
@@ -233,7 +312,17 @@ def write_instance(lib: SeqRepoLib, store, instance_dir: Path, *,
     logger.info("stored %d new sequence(s) and completed %d, %d residues, %d "
                 "alias(es) added, in %.0fs", stats.sequences, stats.completed,
                 stats.residues, stats.aliases_added, stats.seconds)
+    if stats.skipped:
+        logger.warning("left out %d sequence(s) seqrepo cannot hold, with %d "
+                       "alias(es): %s", len(stats.skipped),
+                       sum(s["aliases"] for s in stats.skipped),
+                       json.dumps(skipped_by_cause(stats.skipped), sort_keys=True))
     return stats
+
+
+def skipped_by_cause(skipped: list[dict]) -> dict[str, int]:
+    """Left-out sequences counted by cause and the characters outside A-Z."""
+    return dict(Counter(f"{s['cause']} {s['characters']!r}" for s in skipped))
 
 
 # --------------------------------------------------------------------- verify
@@ -248,41 +337,57 @@ class VerifyResult:
         return not self.problems
 
 
-def _store_alias_triples(store) -> set[tuple[str, str, str]]:
+def _iter_store_aliases(store) -> Iterator[tuple[str, str, str]]:
     """``(namespace, alias, digest)`` for every store sequence alias, read forward."""
-    out = set()
+    # One string per digest, shared by all of its aliases (~18M on the full store).
+    digests: dict[str, str] = {}
     for ns in store.list_sequence_alias_namespaces():
         for alias in store.list_sequence_aliases(ns) or []:
             metadata_ = store.get_sequence_metadata_by_alias(ns, alias)
             if metadata_ is None:
                 raise RuntimeError(f"store alias {ns}:{alias} resolves to nothing")
-            out.add((ns, alias, store_census.strip_sq(metadata_.sha512t24u)))
-    return out
+            digest = store_census.strip_sq(metadata_.sha512t24u)
+            yield ns, alias, digests.setdefault(digest, digest)
+
+
+def _store_alias_triples(store) -> set[tuple[str, str, str]]:
+    return set(_iter_store_aliases(store))
 
 
 def _seqrepo_alias_triples(sr) -> tuple[set[tuple[str, str, str]], Counter, int]:
     """Current seqrepo alias rows, in the namespaces clients query.
 
-    ``find_aliases`` yields each row under its stored namespace and then once
-    per translated namespace (``NCBI`` then ``refseq``). The last record of a
-    row is the client-facing spelling, which is the store's namespace name.
-    Digest namespaces are counted separately.
+    ``find_aliases`` yields each row under its stored namespace and then, right
+    after it, once per translated namespace (``NCBI`` then ``refseq``). The last
+    record of a row is the client-facing spelling, which is the store's
+    namespace name. Digest namespaces are counted separately. Rows are consumed
+    as they stream: holding every record dict costs ~650 bytes per row.
     """
-    by_row: dict[int, dict] = {}
-    db_namespace: dict[int, str] = {}
-    for record in sr.aliases.find_aliases():
-        row = record["seqalias_id"]
-        db_namespace.setdefault(row, record["namespace"])
-        by_row[row] = record
     triples = set()
     db_counts: Counter = Counter()
-    for row, record in by_row.items():
-        db_counts[db_namespace[row]] += 1
-        if db_namespace[row] in DIGEST_NAMESPACES:
-            continue
-        triples.add((record["namespace"], record["alias"], record["seq_id"]))
-    n_all = len({record["seqalias_id"]
-                 for record in sr.aliases.find_aliases(current_only=False)})
+    # One string per namespace and per seq_id, shared across rows.
+    strings: dict[str, str] = {}
+
+    def keep(record: dict | None, db_ns: str | None) -> None:
+        if record is None:
+            return
+        db_counts[db_ns] += 1
+        if db_ns not in DIGEST_NAMESPACES:
+            triples.add((strings.setdefault(record["namespace"], record["namespace"]),
+                         record["alias"],
+                         strings.setdefault(record["seq_id"], record["seq_id"])))
+
+    last, db_ns = None, None
+    for record in sr.aliases.find_aliases():
+        if last is None or record["seqalias_id"] != last["seqalias_id"]:
+            keep(last, db_ns)
+            db_ns = record["namespace"]
+        last = record
+    keep(last, db_ns)
+    n_all, row = 0, None
+    for record in sr.aliases.find_aliases(current_only=False):
+        if record["seqalias_id"] != row:
+            n_all, row = n_all + 1, record["seqalias_id"]
     return triples, db_counts, n_all
 
 
@@ -321,6 +426,11 @@ def verify_instance(lib: SeqRepoLib, store, instance_dir: Path) -> VerifyResult:
             result.problems.append(f"sequence {seq_id} MD5 {md5}, store {m.md5}")
     only_seqrepo = seen - set(meta)
     only_store = set(meta) - seen
+    # The write leaves out what seqrepo would rename or reject. Found here by
+    # the same rule; any other store sequence missing from seqrepo is a problem.
+    left_out = {d for d in only_store if seqrepo_divergence(
+        lib, "".join(store_census.stream_sequence_chunks(store, d)), d) is not None}
+    only_store -= left_out
     if only_seqrepo or only_store:
         result.problems.append(
             f"sequence sets differ: {len(only_store)} only in the store "
@@ -329,10 +439,15 @@ def verify_instance(lib: SeqRepoLib, store, instance_dir: Path) -> VerifyResult:
         )
     result.counts["sequences"] = len(seen)
     result.counts["residues"] = residues
+    result.counts["store_sequences_left_out"] = len(left_out)
     result.counts["sequence_check_seconds"] = round(time.monotonic() - started, 1)
 
-    # Aliases, both directions, as (client namespace, alias, digest).
+    # Aliases, both directions, as (client namespace, alias, digest), less the
+    # left-out sequences' aliases. An alias of one of them that seqrepo holds
+    # (on another sequence) is only in seqrepo, and a problem.
     store_triples = _store_alias_triples(store)
+    n_store_aliases = len(store_triples)
+    store_triples = {t for t in store_triples if t[2] not in left_out}
     sr_triples, db_counts, n_all = _seqrepo_alias_triples(sr)
     for label, missing in (("store", store_triples - sr_triples),
                            ("seqrepo", sr_triples - store_triples)):
@@ -347,7 +462,8 @@ def verify_instance(lib: SeqRepoLib, store, instance_dir: Path) -> VerifyResult:
     for ns in DIGEST_NAMESPACES:
         if db_counts[ns] != len(seen):
             result.problems.append(f"{db_counts[ns]} {ns} aliases for {len(seen)} sequences")
-    result.counts["store_aliases"] = len(store_triples)
+    result.counts["store_aliases"] = n_store_aliases
+    result.counts["store_aliases_left_out"] = n_store_aliases - len(store_triples)
     result.counts["seqrepo_alias_rows"] = n_current
     result.counts["seqrepo_aliases_by_namespace"] = dict(sorted(db_counts.items()))
     return result
@@ -447,6 +563,12 @@ def provenance_record(args, lib: SeqRepoLib, store_dir: Path, instance_dir: Path
             "sequences": stats.sequences, "completed": stats.completed,
             "aliases_added": stats.aliases_added, "residues": stats.residues,
             "store_aliases_by_namespace": dict(sorted(stats.aliases_by_namespace.items())),
+            "left_out": {
+                "sequences": len(stats.skipped),
+                "aliases": sum(s["aliases"] for s in stats.skipped),
+                "by_cause": skipped_by_cause(stats.skipped),
+                "list": stats.skipped,
+            },
             "seconds": round(stats.seconds, 1),
         },
         "verification": None if verified is None else {
@@ -483,11 +605,19 @@ def run_seqrepo(args) -> int:
         raise SystemExit(f"{final_dir} already exists; choose a new --instance-name "
                          "or --target-dir")
 
-    store = RefgetStore.open_local(str(store_dir))
-    store.set_quiet(True)
+    def open_store():
+        store = RefgetStore.open_local(str(store_dir))
+        store.set_quiet(True)
+        return store
+
     lock = build_lock.load_lock(args.lock)
     expected = expected_collections(args.config, lock, args.lock_check_mode)
-    problems = check_store_scope(store, expected)
+    # The scope check loads every collection, and gtars keeps a loaded
+    # collection for the life of the store: 10.8 GB on the full store, which
+    # the write never reads. The check gets a store of its own, dropped when
+    # it returns.
+    problems = check_store_scope(open_store(), expected)
+    store = open_store()
     if problems:
         for problem in problems:
             logger.error("%s", problem)

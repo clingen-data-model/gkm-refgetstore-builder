@@ -1,0 +1,171 @@
+{
+  "schema": "gks-refgetstore-run/1",
+  "run_id": "2026-10-30-full-seqrepo",
+  "kind": "build",
+  "title": "Build a SeqRepo instance mirroring the full store",
+  "status": "succeeded",
+  "timestamps": {
+    "initialized_utc": "2026-10-30T19:26:58.508914+00:00",
+    "finalized_utc": "2026-10-31T18:34:27.528787+00:00"
+  },
+  "baseline_run_id": null,
+  "evidence": {
+    "quality": "captured",
+    "missing": [
+      "git.diff_sha256 is the working tree at init, before the scope-check and alias page-cache changes that build-2 and build-3 ran; artifacts/build-3-code.diff is the diff build-3 ran"
+    ]
+  },
+  "git": {
+    "commit": "338b50717a3b66dd2f617cd4c902809393c970b8",
+    "dirty": true,
+    "status_text": "M src/gks_refgetstore/seqrepo_build.py\n M tests/test_seqrepo_build.py\n?? Sheffield-refgetstore-paper/",
+    "diff_sha256": "a4dd36b5b67ef413668f2c4de2440acb13ecfa67005856d184b02b7ac38a88b5"
+  },
+  "tool_versions": {
+    "python": "3.14.7",
+    "git": "git version 2.50.1 (Apple Git-155)",
+    "uv": "uv 0.12.12 (Homebrew 2026-09-09 aarch64-apple-darwin)",
+    "gtars": "0.11.0"
+  },
+  "commands": [
+    {
+      "label": "build",
+      "argv": [
+        "uv",
+        "run",
+        "--extra",
+        "seqrepo",
+        "gks-refgetstore",
+        "seqrepo",
+        "--config",
+        "sources.toml",
+        "--lock",
+        "build.lock.json",
+        "--store-dir",
+        "/Volumes/RefgetStores/full-2026-10-29",
+        "--target-dir",
+        "/Volumes/RefgetStores/seqrepo",
+        "--instance-name",
+        "full-2026-10-29"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-10-30T19:26:58.658624+00:00",
+      "finished_utc": "2026-10-30T21:13:22.796697+00:00",
+      "exit_code": 143,
+      "log": "logs/build.log",
+      "log_bytes": 25467,
+      "log_sha256": "6c7bbb6649007294cb683fd6926c53f182128f4f16676bbf47e909dfe2760e6b"
+    },
+    {
+      "label": "build-2",
+      "argv": [
+        "uv",
+        "run",
+        "--extra",
+        "seqrepo",
+        "gks-refgetstore",
+        "seqrepo",
+        "--config",
+        "sources.toml",
+        "--lock",
+        "build.lock.json",
+        "--store-dir",
+        "/Volumes/RefgetStores/full-2026-10-29",
+        "--target-dir",
+        "/Volumes/RefgetStores/seqrepo",
+        "--instance-name",
+        "full-2026-10-29"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-10-30T21:14:19.442218+00:00",
+      "finished_utc": "2026-10-30T21:49:14.429049+00:00",
+      "exit_code": 143,
+      "log": "logs/build-2.log",
+      "log_bytes": 9801,
+      "log_sha256": "bfa021f0b1c76bf42800a43f77ef5ca0dd559adbb93c9a3cdb9be0ac89c6660a"
+    },
+    {
+      "label": "build-3",
+      "argv": [
+        "uv",
+        "run",
+        "--extra",
+        "seqrepo",
+        "gks-refgetstore",
+        "seqrepo",
+        "--config",
+        "sources.toml",
+        "--lock",
+        "build.lock.json",
+        "--store-dir",
+        "/Volumes/RefgetStores/full-2026-10-29",
+        "--target-dir",
+        "/Volumes/RefgetStores/seqrepo",
+        "--instance-name",
+        "full-2026-10-29"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-10-30T21:49:15.250390+00:00",
+      "finished_utc": "2026-10-31T00:35:21.905152+00:00",
+      "exit_code": 0,
+      "log": "logs/build-3.log",
+      "log_bytes": 40710,
+      "log_sha256": "01d4754e393bffdc30638ab59968f833d39d000fdde92c2f31015ba81d738326"
+    }
+  ],
+  "artifacts": [
+    {
+      "role": "provenance",
+      "path": "artifacts/full-2026-10-29.provenance.json",
+      "bytes": 301665,
+      "sha256": "507ce34c2a4b0df67cfc3d3cdb2e69bed54392b1aaf9f3322fb557c1a31dee19"
+    },
+    {
+      "role": "left-out",
+      "path": "artifacts/left-out.tsv",
+      "bytes": 162047,
+      "sha256": "450da368849b5e1a8d3cd61601cd17c7490a4220e644d47d0a1abc27e69d0cb1"
+    },
+    {
+      "role": "code-diff",
+      "path": "artifacts/build-3-code.diff",
+      "bytes": 24750,
+      "sha256": "c7cfbab4db2cf082c71eb16980cafd503d4c2d7c1226417bb40c154204d9efe7"
+    }
+  ],
+  "result_summary": {
+    "instance": "/Volumes/RefgetStores/seqrepo/full-2026-10-29",
+    "source_store": "/Volumes/RefgetStores/full-2026-10-29",
+    "sequences": 1909742,
+    "residues": 52499564896,
+    "aliases_added": 18134407,
+    "seqrepo_alias_rows": 25773375,
+    "left_out_sequences": 178,
+    "left_out_aliases": 5020,
+    "left_out_by_cause": {
+      "renamed '*'": 178
+    },
+    "write_seconds": 9594,
+    "sequence_check_seconds": 104,
+    "files": 1292,
+    "bytes": 13307693514
+  },
+  "validations": [
+    {
+      "name": "built-in-verification",
+      "result": "pass",
+      "detail": "1,909,742 sequences read back and re-hashed, lengths and MD5s match the store; the 178 store sequences missing from SeqRepo are exactly those seqrepo's seq_id function renames or rejects; aliases (18,139,427 in the store) equal in both directions apart from the 5,020 on left-out sequences; one digest alias per namespace per sequence"
+    },
+    {
+      "name": "assembly-names-vs-bioutils",
+      "result": "pass",
+      "detail": "25 shared assembly namespaces: no bioutils name missing or differing"
+    },
+    {
+      "name": "tests",
+      "result": "pass",
+      "detail": "286 passed"
+    }
+  ],
+  "publication": null
+}

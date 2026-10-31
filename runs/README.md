@@ -78,6 +78,10 @@ Durable records currently retained:
   the same backends over `variation_identity` (4.7M, one expression per
   variation), 8 workers and 1: with one worker SeqRepo takes 1.64× the remote
   RefgetStore's time, which downloads 2.53 GB and needs no setup.
+- [`2026-10-30-full-seqrepo/`](2026-10-30-full-seqrepo/) — a SeqRepo instance
+  (`seqrepo/full-2026-10-29`, 1,909,742 sequences, 13.3 GB) holding the full
+  store's sequences and aliases apart from 178 Ensembl proteins containing `*`,
+  which seqrepo would file under another digest. Not yet published.
 
 Removed: `2026-07-02-seqrepo-parity/`. Its build and parity analysis were fully
 superseded by `2026-08-26-full-rebuild/`, which covers a larger source set and
