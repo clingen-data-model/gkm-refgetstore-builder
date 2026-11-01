@@ -81,7 +81,11 @@ Durable records currently retained:
 - [`2026-10-30-full-seqrepo/`](2026-10-30-full-seqrepo/) — a SeqRepo instance
   (`seqrepo/full-2026-10-29`, 1,909,742 sequences, 13.3 GB) holding the full
   store's sequences and aliases apart from 178 Ensembl proteins containing `*`,
-  which seqrepo would file under another digest. Not yet published.
+  which seqrepo would file under another digest.
+- [`2026-10-31-full-seqrepo-archive/`](2026-10-31-full-seqrepo-archive/) —
+  that instance as a single archive (8.1 GB), published at
+  `seqrepo/full-2026-10-29.tar.gz` on `clingen-public` and R2 with its `.sha256`
+  and the build's provenance JSON.
 
 Removed: `2026-07-02-seqrepo-parity/`. Its build and parity analysis were fully
 superseded by `2026-08-26-full-rebuild/`, which covers a larger source set and

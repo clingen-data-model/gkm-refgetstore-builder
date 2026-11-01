@@ -1,0 +1,202 @@
+{
+  "schema": "gks-refgetstore-run/1",
+  "run_id": "2026-10-31-full-seqrepo-archive",
+  "kind": "publication",
+  "title": "Publish the full SeqRepo as a single archive to GCS and R2",
+  "status": "succeeded",
+  "timestamps": {
+    "initialized_utc": "2026-11-01T02:46:28.235578+00:00",
+    "finalized_utc": "2026-11-01T03:45:58.194057+00:00"
+  },
+  "baseline_run_id": "2026-10-30-full-seqrepo",
+  "evidence": {
+    "quality": "captured",
+    "missing": []
+  },
+  "git": {
+    "commit": "16150a35bd92ec550e8edf7aa3d414b7815b1caa",
+    "dirty": true,
+    "status_text": "?? Sheffield-refgetstore-paper/",
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "tool_versions": {
+    "python": "3.14.7",
+    "git": "git version 2.50.1 (Apple Git-155)",
+    "uv": "uv 0.12.12 (Homebrew 2026-09-09 aarch64-apple-darwin)",
+    "gtars": "0.11.0"
+  },
+  "commands": [
+    {
+      "label": "create-archive",
+      "argv": [
+        "env",
+        "COPYFILE_DISABLE=1",
+        "bash",
+        "-c",
+        "set -euo pipefail; tar --no-mac-metadata --no-xattrs --no-acls --uid 0 --gid 0 --uname root --gname root -C /Volumes/RefgetStores/seqrepo -cf - full-2026-10-29 | pigz -6 > /Volumes/RefgetStores/archive.8PAV/full-2026-10-29.tar.gz; cp /Volumes/RefgetStores/seqrepo/full-2026-10-29.provenance.json /Volumes/RefgetStores/archive.8PAV/; cd /Volumes/RefgetStores/archive.8PAV; shasum -a 256 full-2026-10-29.tar.gz | tee full-2026-10-29.tar.gz.sha256; ls -l /Volumes/RefgetStores/archive.8PAV"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T02:46:34.014334+00:00",
+      "finished_utc": "2026-11-01T02:47:18.354445+00:00",
+      "exit_code": 0,
+      "log": "logs/create-archive.log",
+      "log_bytes": 354,
+      "log_sha256": "c17065ada5c0ca76e1c8c2c384e40786159366a288e7f43f4cb1a40bed0ca523"
+    },
+    {
+      "label": "verify-archive",
+      "argv": [
+        "bash",
+        "-c",
+        "set -euo pipefail; echo top-level:; tar -tzf /Volumes/RefgetStores/archive.8PAV/full-2026-10-29.tar.gz | cut -d/ -f1 | sort -u; echo appledouble: $(tar -tzf /Volumes/RefgetStores/archive.8PAV/full-2026-10-29.tar.gz | grep -c '\\._' || true); echo entries: $(tar -tzf /Volumes/RefgetStores/archive.8PAV/full-2026-10-29.tar.gz | grep -vc '/$'); tar -xzf /Volumes/RefgetStores/archive.8PAV/full-2026-10-29.tar.gz -C /Volumes/RefgetStores/extract.9qmU; diff -rq /Volumes/RefgetStores/seqrepo/full-2026-10-29 /Volumes/RefgetStores/extract.9qmU/full-2026-10-29 && echo diff: identical; cd /Volumes/RefgetStores/archive.8PAV && shasum -a 256 -c full-2026-10-29.tar.gz.sha256"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T02:47:26.069005+00:00",
+      "finished_utc": "2026-11-01T02:48:54.844122+00:00",
+      "exit_code": 0,
+      "log": "logs/verify-archive.log",
+      "log_bytes": 99,
+      "log_sha256": "88b27042289b8f9758031b29ef3a0a177031ef61f2b7c04bc432cad3eed39974"
+    },
+    {
+      "label": "upload-gcs",
+      "argv": [
+        "rclone",
+        "copy",
+        "/Volumes/RefgetStores/archive.8PAV",
+        "clingengcs:clingen-public/seqrepo",
+        "--checksum",
+        "--stats",
+        "30s",
+        "--stats-log-level",
+        "NOTICE",
+        "--stats-one-line"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T02:49:04.780686+00:00",
+      "finished_utc": "2026-11-01T03:16:39.048580+00:00",
+      "exit_code": 0,
+      "log": "logs/upload-gcs.log",
+      "log_bytes": 4659,
+      "log_sha256": "4256de89e0c72b697f004e67436107f991166d578aba875803410cf688d52110"
+    },
+    {
+      "label": "upload-r2",
+      "argv": [
+        "rclone",
+        "copy",
+        "/Volumes/RefgetStores/archive.8PAV",
+        "theferrit32-public:theferrit32-public/seqrepo",
+        "--checksum",
+        "--s3-no-check-bucket",
+        "--stats",
+        "30s",
+        "--stats-log-level",
+        "NOTICE",
+        "--stats-one-line"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T03:16:53.934043+00:00",
+      "finished_utc": "2026-11-01T03:16:54.411777+00:00",
+      "exit_code": 1,
+      "log": "logs/upload-r2.log",
+      "log_bytes": 138,
+      "log_sha256": "efc8320aac747c1eabc06ae0ddceaeac7c3c249d64c8a379808df34999c58753"
+    },
+    {
+      "label": "check-gcs",
+      "argv": [
+        "bash",
+        "-c",
+        "set -euo pipefail; rclone check /Volumes/RefgetStores/archive.8PAV clingengcs:clingen-public/seqrepo --one-way --include \"full-2026-10-29*\"; U=https://storage.googleapis.com/clingen-public/seqrepo; for f in full-2026-10-29.tar.gz full-2026-10-29.tar.gz.sha256 full-2026-10-29.provenance.json; do printf \"%s \" $f; curl -sfI $U/$f | grep -i \"^content-length\" | tr -d \"\\r\"; done; curl -sf $U/full-2026-10-29.tar.gz.sha256"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T03:17:00.792291+00:00",
+      "finished_utc": "2026-11-01T03:17:13.187088+00:00",
+      "exit_code": 0,
+      "log": "logs/check-gcs.log",
+      "log_bytes": 416,
+      "log_sha256": "d35956b9db17a6dc76292934ccd97e570378a0debefb70d0ee4cbcac77a9a997"
+    },
+    {
+      "label": "upload-r2-2",
+      "argv": [
+        "bash",
+        "-c",
+        "set -euo pipefail; for f in full-2026-10-29.tar.gz full-2026-10-29.tar.gz.sha256 full-2026-10-29.provenance.json; do rclone copyto /Volumes/RefgetStores/archive.8PAV/$f theferrit32-public:theferrit32-public/seqrepo/$f --checksum --s3-no-check-bucket --stats 30s --stats-log-level NOTICE --stats-one-line; done"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T03:17:40.741798+00:00",
+      "finished_utc": "2026-11-01T03:44:54.318927+00:00",
+      "exit_code": 0,
+      "log": "logs/upload-r2-2.log",
+      "log_bytes": 4713,
+      "log_sha256": "64eaf56966206246cbb51dee1a4b98c2f6624f9b7dfac0c4f5e6649a7f4c3b9f"
+    },
+    {
+      "label": "check-r2",
+      "argv": [
+        "bash",
+        "-c",
+        "set -euo pipefail; A=/Volumes/RefgetStores/archive.8PAV; bad=0; for f in full-2026-10-29.tar.gz full-2026-10-29.tar.gz.sha256 full-2026-10-29.provenance.json; do l=$(md5 -q $A/$f); r=$(rclone md5sum theferrit32-public:theferrit32-public/seqrepo/$f --s3-no-check-bucket | cut -d\" \" -f1); ls=$(stat -f %z $A/$f); rs=$(rclone size --json theferrit32-public:theferrit32-public/seqrepo/$f --s3-no-check-bucket | python3 -c \"import json,sys;print(json.load(sys.stdin)[\\\"bytes\\\"])\"); echo \"$f size local=$ls r2=$rs md5 local=$l r2=$r\"; [ \"$l\" = \"$r\" ] && [ \"$ls\" = \"$rs\" ] || bad=1; done; U=https://static.ferriter.dev/seqrepo; for f in full-2026-10-29.tar.gz full-2026-10-29.tar.gz.sha256 full-2026-10-29.provenance.json; do printf \"%s \" $f; curl -sfI $U/$f | grep -i \"^content-length\" | tr -d \"\\r\"; done; curl -sf $U/full-2026-10-29.tar.gz.sha256; echo; [ $bad = 0 ] && echo \"r2: all match\"; exit $bad"
+      ],
+      "working_directory": "/Users/kferrite/dev/gks-refgetstore-builder",
+      "started_utc": "2026-11-01T03:45:09.000566+00:00",
+      "finished_utc": "2026-11-01T03:45:23.721482+00:00",
+      "exit_code": 0,
+      "log": "logs/check-r2.log",
+      "log_bytes": 664,
+      "log_sha256": "3a4e5f7bd9bf9b5ae282f4ff7bf55d049574f7f88ec52b51d45ff7ff0a6132fd"
+    }
+  ],
+  "artifacts": [
+    {
+      "role": "archive-sha256",
+      "path": "artifacts/full-2026-10-29.tar.gz.sha256",
+      "bytes": 89,
+      "sha256": "6fdcfe2cfcc29105fde813bed1bf4438821db3ba0f1768452b1dae1a2e988c0a"
+    }
+  ],
+  "result_summary": {
+    "archive": "seqrepo/full-2026-10-29.tar.gz",
+    "bytes": 8114076347,
+    "sha256": "07682b24416145576fa5775bd8ff8d4777d3fea29c5026d1b300cb17be9d6d96",
+    "files": 1292,
+    "source": "/Volumes/RefgetStores/seqrepo/full-2026-10-29",
+    "destinations": [
+      "gs://clingen-public/seqrepo/",
+      "theferrit32-public/seqrepo/ (R2)"
+    ],
+    "public_urls": [
+      "https://storage.googleapis.com/clingen-public/seqrepo/full-2026-10-29.tar.gz",
+      "https://static.ferriter.dev/seqrepo/full-2026-10-29.tar.gz"
+    ],
+    "published_beside": [
+      "full-2026-10-29.tar.gz.sha256",
+      "full-2026-10-29.provenance.json"
+    ]
+  },
+  "validations": [
+    {
+      "name": "extract-and-diff",
+      "result": "pass",
+      "detail": "the archive extracts to a tree identical to the instance directory (diff -rq): one top-level directory full-2026-10-29/, 1,292 files, no AppleDouble entries"
+    },
+    {
+      "name": "gcs-rclone-check",
+      "result": "pass",
+      "detail": "0 differences across the archive, its .sha256 and the provenance JSON"
+    },
+    {
+      "name": "r2-size-and-md5",
+      "result": "pass",
+      "detail": "each of the three objects has the local file's size and MD5"
+    },
+    {
+      "name": "public-urls",
+      "result": "pass",
+      "detail": "unauthenticated HTTPS serves all three objects at full content length from GCS and R2; each served .sha256 holds the archive's digest"
+    }
+  ],
+  "publication": null
+}
