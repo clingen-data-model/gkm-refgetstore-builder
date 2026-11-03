@@ -39,6 +39,13 @@
 #   shard_range  [min, max] inclusive integer range substituted into
 #                url_template. Omit for a single-file seqset.
 #   urls         Explicit URL list (mutually exclusive with the other modes).
+#   efetch_accessions  Path (relative to this file) of a sorted accession.version
+#                list fetched from NCBI E-utilities efetch into one FASTA. For
+#                versions no bulk release carries. The source URL is the efetch
+#                request plus the list's digest, so editing the list is a new
+#                source to the lock and to sync.
+#   efetch_db    efetch database for efetch_accessions: "nuccore" (default) or
+#                "protein".
 #   url_pattern  HTTPS URL with a glob in its basename. Requires the companion
 #                checksum_manifest_url in the same directory.
 #   checksum_manifest_url  NCBI *.files.installed file used for discovery + MD5.
@@ -69,7 +76,8 @@
 # to retain sequences, including retired FIX scaffolds, and its report adds the
 # aliases used by that release. GRCh37.p11 and GRCh37.p12 are report-only:
 # their configured NCBI genomic-FASTA URLs are unavailable, but their reports
-# are still published.
+# are still published. NCBI36 is report-only too, with its sequences fetched
+# per accession.
 
 # GRCh38: original release followed by patch releases.
 [[assembly]]
@@ -238,6 +246,30 @@ report_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_00000
 checksum_manifest_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/md5checksums.txt"
 load_fasta = true
 
+# NCBI36 (hg18). NCBI publishes its assembly report but no genomic FASTA, so
+# the report is applied alias-only and its RefSeq sequences are fetched per
+# accession by the seqset below.
+[[assembly]]
+namespace = "NCBI36"
+report_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.12_NCBI36/GCF_000001405.12_NCBI36_assembly_report.txt"
+checksum_manifest_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.12_NCBI36/md5checksums.txt"
+load_fasta = false
+
+[[seqset]]
+name = "ncbi36_refseq"
+namespace = "refseq"
+efetch_accessions = "accession_lists/ncbi36_refseq.txt"
+file_class = "genomic"
+
+# T2T-CHM13v2.0: the telomere-to-telomere alternate human assembly, outside the
+# GRC reference timelines above.
+[[assembly]]
+namespace = "T2T-CHM13v2.0"
+fasta_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna.gz"
+report_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/GCF_009914755.1_T2T-CHM13v2.0_assembly_report.txt"
+checksum_manifest_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/009/914/755/GCF_009914755.1_T2T-CHM13v2.0/md5checksums.txt"
+load_fasta = true
+
 [[seqset]]
 name = "refseq_human_rna"
 namespace = "refseq"
@@ -260,6 +292,30 @@ name = "refseq_human_refseqgene"
 namespace = "refseq"
 url_pattern = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/RefSeqGene/refseqgene.*.genomic.fna.gz"
 checksum_manifest_url = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/RefSeqGene/refseqgene.files.installed"
+file_class = "genomic"
+
+# Superseded and retired RefSeqGene versions. The RefSeqGene FTP above holds only
+# each NG_ accession's current version, but clients still cite earlier ones
+# (ClinVar's NG_ HGVS, and seqrepo, which has them from older imports). NCBI
+# serves every version through E-utilities, so these are fetched one accession
+# at a time, listed in a checked-in file derived from gene_RefSeqGene: every
+# earlier version of each current accession, plus accessions since retired from
+# it. `gks-refgetstore refseqgene-history` updates the list; see efetch.py.
+[[seqset]]
+name = "refseq_human_refseqgene_superseded"
+namespace = "refseq"
+efetch_accessions = "accession_lists/refseqgene_superseded.txt"
+file_class = "genomic"
+
+# NCBI RefSeq Functional Elements: genomic biological regions (NG_ accessions
+# that are not RefSeqGene), such as recombination regions, enhancers and
+# pseudogene regions. ClinVar cites them in genomic HGVS. NCBI publishes the
+# current set as one file with no checksum manifest, so the lock's SHA-256 of
+# the downloaded file is the integrity anchor, as for LRG below.
+[[seqset]]
+name = "refseq_human_biological_region"
+namespace = "refseq"
+urls = ["https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/biological_region/human.biological_region.fna.gz"]
 file_class = "genomic"
 
 # ---------------------------------------------------------------------------

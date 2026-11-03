@@ -39,7 +39,7 @@ header names. The only runtime dependency is `gtars`.
   macOS (APFS) and Windows (NTFS) are case-insensitive, and a store written to
   one cannot be published. See
   [Case-sensitive store directory](#case-sensitive-store-directory).
-- Disk: the default manifest includes 23 NCBI assembly releases, complete
+- Disk: the default manifest includes 25 NCBI assembly releases, complete
   published GRCh37/GRCh38 RefSeq release history, and all four canonical FASTA
   classes for Ensembl releases 75–116.
   Its cache and store therefore need substantially more capacity than a
@@ -191,6 +191,7 @@ styles:
 | `sync` | apply `sources.toml` changes incrementally | missing sources |
 | `fetch` | pre-populate the download cache (no ingest) | download failure |
 | `lock` | regenerate a lock for a build that already ran | — |
+| `seqrepo` | build a biocommons SeqRepo holding exactly a store's sequences and aliases | store/lock disagreement, verification failure |
 
 Global: `-v/--verbose` for debug logging. Every subcommand shares
 `--config` (default `./sources.toml`) and `--cache-dir` (default `./downloads`).
@@ -289,6 +290,8 @@ aborts.
 
 Idempotent (skips files already cached), atomic, disk-guarded
 (`--min-free-gb`). Useful to warm the cache before a long build, or offline.
+`efetch_accessions` sources are retrieved from NCBI E-utilities at NCBI's rate
+limit rather than downloaded; see [efetch sources](#efetch-sources).
 
 ### `verify` — check the cache and the store
 
@@ -411,6 +414,57 @@ missing *after* the removal leaves the store worse than it started.
 Reconstructs the file→collection mapping from a build log and re-hashes the
 cache, producing the same lock a full build would. Use it to backfill a lock
 for a build that already ran.
+
+### `seqrepo` — the same data as a biocommons SeqRepo
+
+    uv sync --extra seqrepo
+    gks-refgetstore seqrepo --config sources.genomic.toml --lock build.lock.json \
+        --lock-check-mode subset --store-dir <store> \
+        --target-dir <seqrepo root> --instance-name genomic-2026-10-27
+
+Writes a [biocommons SeqRepo](https://github.com/biocommons/biocommons.seqrepo)
+instance at `<seqrepo root>/<instance>` holding the store's sequences under the
+same identifiers, so the two backends can be compared on identical data. Needs
+the `seqrepo` extra (`biocommons.seqrepo` 0.6.11, `bioutils` 0.6.2) and htslib's
+`bgzip` on `PATH` (or `SEQREPO_BGZIP_PATH`).
+
+- **Store and lock.** The store is opened read-only and must hold exactly the
+  collections the lock attributes to the manifest's sources, selected the same
+  way `build --locked-sources` selects them. `--lock-check-mode subset` lets a
+  manifest select part of a larger lock (`sources.genomic.toml` against the full
+  `build.lock.json`); `strict`, the default, requires the manifest to own every
+  locked source.
+- **Writes.** Every sequence is stored with one call to the seqrepo library's
+  `SeqRepo.store(seq, aliases)`, carrying every alias the store holds for it,
+  then `commit()`. Seqrepo computes the `seq_id`, writes and indexes the bgzip
+  FASTA files, inserts the alias rows, and adds its digest aliases (`VMC`,
+  `MD5`, `SHA1`, `SEGUID`) to every sequence. A sequence whose seqrepo `seq_id`
+  differs from its store digest stops the build; seqrepo removes `*` before
+  digesting, so this applies to proteins that carry one.
+- **Namespaces.** Aliases are passed under the store's namespace names.
+  Seqrepo stores `refseq` as `NCBI` and `lrg` as `LRG` and answers lookups under
+  either spelling; `insdc` and the assembly namespaces (`GRCh38`, `GRCh38.p14`,
+  `NCBI36`, `T2T-CHM13v2.0`, …) are stored as they are. `seqrepo
+  add-assembly-names` is not run: the store's assembly namespaces already hold
+  every sequence and UCSC name bioutils lists for them, and that command would
+  also add `NCBI34`/`NCBI35` names that the store does not have.
+- **Verification.** Before the instance is renamed into place from a temporary
+  sibling directory, every sequence is read back through seqrepo and re-hashed,
+  its length and MD5 compared with the store's, and the alias sets compared in
+  both directions. `--verify-only` repeats this for an existing instance.
+- **Adding to an instance.** `--add-missing` opens an existing instance in
+  place and stores only the sequences it lacks, or holds without some of the
+  store's aliases, then verifies the whole instance. Seqrepo writes them to a new
+  bgzip file and leaves the existing files unchanged, so an APFS clone
+  (`cp -c -R`) of a published instance can be extended cheaply.
+- **Provenance.** `<seqrepo root>/<instance>.provenance.json` records the
+  manifest, lock and store digests, the seqrepo, bioutils, pysam, bgzip and
+  gtars versions, counts, the verification result, and the SHA-256 of every
+  file in the instance.
+
+`tools/check_seqrepo_proxies.py` resolves every store alias through vrs-python's
+SeqRepo and RefgetStore data proxies and requires both to return the same
+`SQ.` digest.
 
 ### Post-build store self-check (separate entry point)
 
@@ -574,6 +628,8 @@ Each `[[seqset]]` block (flat FASTA where the header name is the accession):
 | `url_template` | one of | URL with `{shard}` placeholder, or plain URL if unsharded. |
 | `urls` | one of | Explicit list of URLs (alternative to `url_template`; not valid with `shard_range`). |
 | `url_pattern` | one of | HTTPS URL whose basename contains a glob; requires `checksum_manifest_url`. |
+| `efetch_accessions` | one of | Path, relative to this manifest, of a sorted `accession.version` list fetched one accession at a time from NCBI E-utilities `efetch` into one FASTA. For versions no bulk release carries. |
+| `efetch_db` | no, default `nuccore` | `efetch` database for `efetch_accessions`: `nuccore` or `protein`. |
 | `checksum_manifest_url` | with `url_pattern` | HTTPS NCBI `*.files.installed` URL in the same directory. |
 | `md5_manifest_urls` | no | Per-URL NCBI `md5checksums.txt` list for explicit historical inputs. |
 | `checksum_manifest_urls` | no | Per-URL Ensembl `CHECKSUMS` list; BSD checksum and 1 KiB block count are validated. |
@@ -585,7 +641,8 @@ Each `[[seqset]]` block (flat FASTA where the header name is the accession):
 | `format` | no, default `fasta` | `fasta`; `gbff` to convert a GenBank flat file to FASTA before ingest; or `lrg_zip` to concatenate the `LRG_N.fasta` members of an EBI LRG bundle, in natural-sorted member order, into one FASTA. Non-FASTA formats are cached as `<artifact>.fasta` beside the download and regenerate offline. |
 | `exclude` | no | Table `{file_classes = [...], record_prefixes = [...]}` dropping records from the named file classes before ingest. Matching is on the record name only, never on sequence content. The filtered FASTA is cached as `<artifact>.filtered.fa.gz` beside the download, with `<artifact>.excluded.tsv` listing every dropped record. A rule matching nothing is an error. |
 
-Exactly one of `url_template`, `urls`, or `url_pattern` is required.
+Exactly one of `url_template`, `urls`, `url_pattern`, or `efetch_accessions` is
+required.
 `shard_range` is valid only with `url_template`; `checksum_manifest_url` is
 valid and required only with `url_pattern`. Pattern matching is local to safe
 manifest basenames. Records must be strict `MD5 filename` lines; malformed,
@@ -605,6 +662,54 @@ The [RefSeqGene README](https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/RefSeqGene
 describes its numbered subsets and frequent updates. Current RefSeq feeds are
 therefore intentionally dynamic; historical RefSeq releases, assemblies, and
 Ensembl releases remain explicit URLs.
+
+### efetch sources
+
+An `efetch_accessions` seqset is one source whose URL is the `efetch` request
+plus the digest of its accession list:
+
+    https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&rettype=fasta&retmode=text#<name>-<first 16 hex of the list's sha256>.fna.gz
+
+It caches at `downloads/eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi/<name>-<digest>.fna.gz`.
+Everything keyed on a source URL — the lock record, drift checks, `sync`'s plan —
+therefore follows the list: editing it adds a new source and removes the old
+one, exactly as a new upstream file would.
+
+`fetch` and `build` retrieve the list in POST batches of 200 on a few threads.
+One process-wide limiter paces every request at NCBI's limit: 3 requests/s, or
+10/s when `NCBI_API_KEY` is set. When NCBI answers HTTP 429, or with its JSON
+`API rate limit exceeded` body, all requests pause for the server's
+`Retry-After`, and the request interval doubles, recovering gradually as
+requests succeed. Server errors and dropped connections are retried with
+exponential backoff; a batch that still fails fails the fetch, so a partial
+result is never cached. Requests carry `tool=gks-refgetstore-builder`, plus
+`email=` when `NCBI_EMAIL` is set.
+
+Records are written in list order with a fixed gzip header, so the same list
+and the same upstream records produce the same bytes, and the lock's SHA-256 is
+reproducible across fetches. `efetch` silently omits an id it cannot retrieve
+when other ids in the request succeed, and rejects a request in which none
+succeeds with HTTP 400. A rejected batch is bisected down to the
+unretrievable ids. Those are left out with a warning and listed in
+`<artifact>.missing.txt`.
+
+The RefSeqGene history list, `accession_lists/refseqgene_superseded.txt`, is
+generated:
+
+    gks-refgetstore refseqgene-history \
+        --seqrepo-aliases /path/to/seqrepo/<snapshot>/aliases.sqlite3
+
+It reads NCBI's current `gene_RefSeqGene` table and lists every earlier version
+of each current `NG_` accession: RefSeq version numbers are dense, so `NG_x.3`
+implies `.1` and `.2`. It adds every version of any `NG_` accession already in
+the list, or supplied with `--seed` or `--seqrepo-aliases`, that is no longer
+current. Entries are only ever added, so an accession that NCBI retires from
+`gene_RefSeqGene` keeps its history. The current versions themselves come from
+the RefSeqGene FTP seqset.
+
+The NCBI36 list, `accession_lists/ncbi36_refseq.txt`, is the `RefSeq-Accn`
+column of the NCBI36 assembly report, which the NCBI36 report-only assembly
+entry applies.
 
 ## What gets written
 
@@ -649,9 +754,20 @@ membership of mutable current RefSeq feeds from official checksum manifests. It 
 - **NCBI assemblies:** the original GRCh38 and GRCh37 releases, their listed
   patch releases, and their matching assembly reports. GRCh37.p11 and p12 are
   report-only because NCBI does not publish genomic FASTAs for them.
+- **NCBI36 (hg18):** its assembly report, applied alias-only, and its 123
+  RefSeq sequences (24 chromosomes and 99 scaffolds), fetched per accession
+  from E-utilities because NCBI publishes no NCBI36 genomic FASTA.
+- **T2T-CHM13v2.0:** the RefSeq assembly (`GCF_009914755.1`) and its report.
+  Its 24 nuclear chromosomes are loaded; its mitochondrion, GenBank-only
+  `CP068254.1`, is not in the RefSeq FASTA and is not in the store.
 - **NCBI RefSeq:** current mRNA, protein, and RefSeqGene shards, plus every RNA
   and protein FASTA discoverable in the official GRCh37/GRCh38 assembly and
   taxid-9606 annotation-release histories.
+- **RefSeqGene history:** every superseded version of each current `NG_`
+  accession, and every version of `NG_` accessions since retired from
+  `gene_RefSeqGene`, fetched per accession from E-utilities (see
+  [efetch sources](#efetch-sources)). The RefSeqGene FTP publishes only current
+  versions.
 - **Ensembl:** releases **75–116**, each with unmasked `dna.toplevel`, cDNA,
   ncRNA, and peptide FASTAs. CDS, masked DNA, and redundant chromosome or
   primary-assembly subsets are deliberately excluded.
@@ -686,9 +802,9 @@ DNA sequences are not affected.
 The published store is
 `theferrit32-public:theferrit32-public/refgetstore/2026-10-07`, served at
 <https://static.ferriter.dev/refgetstore/2026-10-07/>: 1,779,052 sequences and
-235 collections, built from the current `sources.toml` with the gtars revision
-above (see [gtars revision](#gtars-revision) for which gtars can read it). Its
-build is [`runs/2026-10-08-case-sensitive-rebuild/`](runs/2026-10-08-case-sensitive-rebuild/)
+235 collections, built with the gtars revision above (see
+[gtars revision](#gtars-revision) for which gtars can read it). Its build is
+[`runs/2026-10-08-case-sensitive-rebuild/`](runs/2026-10-08-case-sensitive-rebuild/)
 and its upload [`runs/2026-10-08-r2-resync/`](runs/2026-10-08-r2-resync/),
 whose `published-manifest.json` is the manifest uploaded with it.
 
@@ -696,8 +812,11 @@ The earlier published prefixes, `refgetstore/2026-06-24` and
 `refgetstore/2026-07-22`, were deleted from the bucket; their records remain in
 [`runs/`](runs/).
 
-The local `store` is a build target and is not published automatically. The
-prior isolated release-116 experiment is documented at
+The local `store` is a build target and is not published automatically. It
+and `build.lock.json` hold 1,781,660 sequences and 238 collections: the
+published set plus the RefSeqGene history, NCBI36 and T2T-CHM13v2.0 sources,
+none of which the published store has. The prior isolated release-116
+experiment is documented at
 [`runs/2026-07-23-ensembl-r116-genomic-experiment/`](runs/2026-07-23-ensembl-r116-genomic-experiment/).
 Do not infer publication status from a local store directory.
 

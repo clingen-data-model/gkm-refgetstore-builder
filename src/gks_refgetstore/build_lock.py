@@ -35,6 +35,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,7 +64,8 @@ __all__ = [  # noqa: RUF022 - grouped by role, not alphabetized
     "files_by_collection", "lock_sources_toml_sha256", "upstream_md5_of",
     "validate_lock", "load_lock", "write_lock",
     "build_lock_dict", "merge_into_lock", "store_outputs",
-    "apply_locked_sources", "canonical_spec_sha256", "ingest_spec_for",
+    "apply_locked_sources", "sources_owned_by", "locked_collections_for",
+    "canonical_spec_sha256", "ingest_spec_for",
     "LockCheck", "evaluate_cache_vs_lock", "evaluate_sources_vs_lock",
     "SyncPlan", "plan_sync", "reingest_scope",
 ]
@@ -77,6 +79,7 @@ def is_mutable(url: str) -> bool:
     return (
         "/mRNA_Prot/" in url            # current RefSeq transcript/protein shards
         or "/RefSeqGene/" in url         # current RefSeqGene
+        or "/biological_region/" in url  # current RefSeq genomic biological regions
         or "/release-113/" in url        # pinned-current Ensembl release
     )
 
@@ -609,6 +612,20 @@ def apply_locked_sources(
         )
         for record in lock_files(lock)
     ]
+    # The lock records an efetch source's URL, which pins its list's digest but
+    # not the list. Re-attach the manifest's list when it is still that list,
+    # so a locked source can be re-fetched (repair); otherwise it stays
+    # cache-only.
+    efetch_ids = {
+        url: seqset.efetch_ids
+        for seqset in seqsets if seqset.efetch_ids is not None
+        for _, url in seqset.iter_shard_urls()
+    }
+    sources = [
+        dataclasses.replace(source, efetch_ids=efetch_ids[source.url])
+        if source.url in efetch_ids else source
+        for source in sources
+    ]
     by_owner: dict[str, list[ResolvedSource]] = {}
     for source in sources:
         if source.kind == "seqset":
@@ -621,6 +638,42 @@ def apply_locked_sources(
             )
         seqset.resolved_sources = locked
     return sources
+
+
+def sources_owned_by(
+    sources: list[ResolvedSource], assemblies, seqsets,
+) -> list[ResolvedSource]:
+    """The sources a manifest's entries own, in their given order.
+
+    Assembly files (``assembly_fasta``/``assembly_report``) are owned by the
+    assembly's namespace and seqset files by the seqset's name. With
+    :func:`apply_locked_sources`, this is how a manifest selects its subset of a
+    larger lock: ``sources.genomic.toml`` against the full ``build.lock.json``.
+    """
+    assembly_owners = {entry.namespace for entry in assemblies}
+    seqset_owners = {entry.name for entry in seqsets}
+    return [source for source in sources
+            if (source.kind.startswith("assembly_") and source.owner in assembly_owners)
+            or (source.kind == "seqset" and source.owner in seqset_owners)]
+
+
+def locked_collections_for(lock: dict, sources: list[ResolvedSource]) -> dict[str, int]:
+    """``collection digest -> n_sequences`` for the collections ``sources`` produced.
+
+    Read from the lock: a source's cache path maps to the one collection it
+    contributed to (``collection_by_file``). Sources that produce no collection
+    of their own -- assembly reports, and files whose bytes duplicate another
+    source's -- contribute nothing beyond what ``from`` records.
+    """
+    cache_path_by_url = {record["url"]: record["cache_path"] for record in lock_files(lock)}
+    by_file = collection_by_file(lock)
+    sizes = {c["digest"]: c["n_sequences"] for c in lock_collections(lock)}
+    out: dict[str, int] = {}
+    for source in sources:
+        digest = by_file.get(cache_path_by_url.get(source.url, ""))
+        if digest is not None:
+            out[digest] = sizes[digest]
+    return out
 
 
 # ---------------------------------------------------------------- comparison

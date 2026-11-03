@@ -34,6 +34,58 @@ Durable records currently retained:
 - [`2026-10-09-retire-r2-prefixes/`](2026-10-09-retire-r2-prefixes/) — the
   superseded `refgetstore/2026-06-24` and `refgetstore/2026-07-22` prefixes
   deleted from R2.
+- [`2026-10-09-ng-efetch-backfill/`](2026-10-09-ng-efetch-backfill/) — 2,501
+  superseded and retired RefSeqGene versions fetched from E-utilities and added
+  as one collection. Not yet published; R2's `refgetstore/2026-10-07` lacks them.
+- [`2026-10-27-ncbi36-t2t/`](2026-10-27-ncbi36-t2t/) — the current local store
+  and lock: NCBI36, as a report-only assembly plus its 123 RefSeq sequences
+  fetched from E-utilities, and T2T-CHM13v2.0's 24 nuclear chromosomes. Not yet
+  published.
+- [`2026-10-27-genomic-r2-upload/`](2026-10-27-genomic-r2-upload/) — the
+  genomic-only store from `sources.genomic.toml` (13,615 sequences, 4.9 GB),
+  published at `refgetstore/genomic-2026-10-27`.
+- [`2026-10-27-genomic-archive/`](2026-10-27-genomic-archive/) — that store as a
+  single archive, `refgetstore/genomic-2026-10-27.tar.gz`, for consumers that
+  download the whole store.
+- [`2026-10-29-genomic-gcs-mirror/`](2026-10-29-genomic-gcs-mirror/) — the same
+  store mirrored to `gs://clingen-public/refgetstore/genomic-2026-10-27`, public
+  and in the Cloud Batch region (reconstructed record).
+- [`2026-10-29-genomic-seqrepo/`](2026-10-29-genomic-seqrepo/) — a biocommons
+  SeqRepo instance (`genomic-2026-10-27`, 3.5 GB) holding exactly the genomic
+  store's 13,615 sequences and 45,471 aliases, built with `gks-refgetstore
+  seqrepo`. Both vrs-python data proxies resolve every alias to the same digest.
+- [`2026-10-29-genomic-seqrepo-archive/`](2026-10-29-genomic-seqrepo-archive/) —
+  that instance as a single archive, published at
+  `gs://clingen-public/seqrepo/genomic-2026-10-27.tar.gz` with its `.sha256` and
+  the build's provenance JSON.
+- [`2026-10-29-biological-region/`](2026-10-29-biological-region/) — the current
+  lock: NCBI's RefSeq genomic biological regions (128,261 `NG_` records) added
+  as one seqset and built into `full-2026-10-29` and `genomic-2026-10-29`, clones
+  of the full and genomic stores. `store/` is one collection behind the lock.
+- [`2026-10-29-genomic-seqrepo-update/`](2026-10-29-genomic-seqrepo-update/) —
+  the genomic SeqRepo extended to match `genomic-2026-10-29`
+  (`seqrepo/genomic-2026-10-29`, 141,875 sequences) with `gks-refgetstore
+  seqrepo --add-missing` on a clone of `genomic-2026-10-27`.
+- [`2026-10-29-genomic-2026-10-29-publish/`](2026-10-29-genomic-2026-10-29-publish/) —
+  `genomic-2026-10-29` published per file to R2 and `clingen-public`, its store
+  archive to both, and the SeqRepo archive to `gs://clingen-public/seqrepo/`.
+- [`2026-10-29-vrsify-all-genomic-eval/`](2026-10-29-vrsify-all-genomic-eval/) —
+  clinvar-ingest vrsify over every genomic expression of ClinVar 2026-10-24
+  (29.1M) on Cloud Batch with four backends holding `genomic-2026-10-29`:
+  identical outputs; RefgetStore range reads 1.04× and SeqRepo 1.40× the time
+  of whole-sequence RefgetStore reads.
+- [`2026-10-29-vrsify-one-per-variant-eval/`](2026-10-29-vrsify-one-per-variant-eval/) —
+  the same backends over `variation_identity` (4.7M, one expression per
+  variation), 8 workers and 1: with one worker SeqRepo takes 1.64× the remote
+  RefgetStore's time, which downloads 2.53 GB and needs no setup.
+- [`2026-10-30-full-seqrepo/`](2026-10-30-full-seqrepo/) — a SeqRepo instance
+  (`seqrepo/full-2026-10-29`, 1,909,742 sequences, 13.3 GB) holding the full
+  store's sequences and aliases apart from 178 Ensembl proteins containing `*`,
+  which seqrepo would file under another digest.
+- [`2026-10-31-full-seqrepo-archive/`](2026-10-31-full-seqrepo-archive/) —
+  that instance as a single archive (8.1 GB), published at
+  `seqrepo/full-2026-10-29.tar.gz` on `clingen-public` and R2 with its `.sha256`
+  and the build's provenance JSON.
 
 Removed: `2026-07-02-seqrepo-parity/`. Its build and parity analysis were fully
 superseded by `2026-08-26-full-rebuild/`, which covers a larger source set and

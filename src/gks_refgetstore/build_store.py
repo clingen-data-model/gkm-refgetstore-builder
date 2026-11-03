@@ -24,7 +24,7 @@ from typing import Callable, Iterator
 
 from gtars.refget import RefgetStore
 
-from . import build_lock, fs_checks
+from . import build_lock, efetch, fs_checks
 from .sources import (NA_VALUES, AssemblyConfig, RecordExclusion,
                       ResolvedSource, SeqsetConfig, load_config, md5_file,
                       mirror_cache_path, natural_sort_key,
@@ -480,6 +480,13 @@ def ensure_download(url: str, target: Path, force: bool,
             )
             return target
         logger.warning("cached provider checksum mismatch; re-downloading %s", target)
+    if source is not None and source.efetch_ids is not None:
+        logger.info("fetching %d accessions from E-utilities -> %s",
+                    len(source.efetch_ids), target)
+        efetch.materialize(efetch.efetch_db_of(url), source.efetch_ids, target)
+        return target
+    if efetch.is_efetch_url(url):
+        raise ValueError(f"efetch source has no accession list: {url}")
     logger.info("downloading %s -> %s", url, target)
     tmp = target.with_suffix(target.suffix + ".part")
     urllib.request.urlretrieve(url, tmp)  # noqa: S310
@@ -1432,11 +1439,7 @@ def run_build(args) -> int:
     )
     # The concrete files this run will touch (used for both the pre-flight check
     # and the partial add-to merge).
-    assembly_owners = {entry.namespace for entry in sel_assemblies}
-    seqset_owners = {entry.name for entry in sel_seqsets}
-    run_sources = [source for source in all_sources
-                   if (source.kind.startswith("assembly_") and source.owner in assembly_owners)
-                   or (source.kind == "seqset" and source.owner in seqset_owners)]
+    run_sources = build_lock.sources_owned_by(all_sources, sel_assemblies, sel_seqsets)
 
     # Materialize and validate every input before opening or mutating the store.
     locked_by_url = ({record["url"]: record

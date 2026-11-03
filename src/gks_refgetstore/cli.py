@@ -10,6 +10,10 @@ Subcommands:
   sync     apply sources.toml changes to an existing store incrementally
   fetch    pre-populate the download cache from the manifest (no ingest)
   lock     (re)generate a build.lock.json for a build that already ran
+  refseqgene-history
+           update the checked-in list of superseded NG_ versions to efetch
+  seqrepo  build a biocommons SeqRepo holding exactly a store's sequences and
+           aliases (needs the ``seqrepo`` extra and htslib ``bgzip``)
 
 All subcommands share one library: the source model -- manifest schema, source
 resolution, cache-path mapping (``sources``) -- the build engine
@@ -43,9 +47,11 @@ from pathlib import Path
 from . import (
     build_lock,
     build_store,
+    efetch,
     fetch_sources,
     fs_checks,
     repair,
+    seqrepo_build,
     store_sync,
     verify,
 )
@@ -271,6 +277,59 @@ def _add_lock(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=build_lock.run_lock)
 
 
+def _add_refseqgene_history(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "refseqgene-history",
+        help="update the list of superseded RefSeqGene versions to fetch",
+        description=efetch.run_refseqgene_history.__doc__,
+    )
+    p.add_argument("--out", type=Path,
+                   default=Path("accession_lists/refseqgene_superseded.txt"),
+                   help="accession list to update in place (entries are only added)")
+    p.add_argument("--gene-refseqgene-url", default=efetch.GENE_REFSEQGENE_URL)
+    p.add_argument("--seed", type=Path, nargs="*", default=None,
+                   help="accession lists whose NG_ versions (and earlier) to include")
+    p.add_argument("--seqrepo-aliases", type=Path, default=None,
+                   help="a SeqRepo aliases.sqlite3: include its NCBI NG_ accessions")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the list instead of writing it")
+    p.set_defaults(func=efetch.run_refseqgene_history)
+
+
+def _add_seqrepo(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "seqrepo",
+        help="build a biocommons SeqRepo holding exactly a store's sequences and aliases",
+        description=seqrepo_build.__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
+                   help="manifest the store was built from")
+    p.add_argument("--lock", type=Path, default=DEFAULT_LOCK,
+                   help="build lock the store was built from")
+    p.add_argument("--lock-check-mode", choices=["strict", "subset"], default="strict",
+                   help="strict (default): the manifest owns every locked source; "
+                        "subset: the manifest selects part of a larger lock, as "
+                        "for build --locked-sources --lock-check-mode subset")
+    p.add_argument("--store-dir", type=Path, default=DEFAULT_STORE,
+                   help="source RefgetStore; opened read-only")
+    p.add_argument("--target-dir", type=Path, required=True,
+                   help="SeqRepo root directory (seqrepo's --root-directory)")
+    p.add_argument("--instance-name", default=None,
+                   help="instance directory under --target-dir (seqrepo's "
+                        "--instance-name); default: the store directory's name")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--verify-only", action="store_true",
+                      help="verify an existing instance against the store; no writes")
+    mode.add_argument("--no-verify", action="store_true",
+                      help="skip verification after writing")
+    p.add_argument("--add-missing", action="store_true",
+                   help="add to an existing instance, in place, only the store "
+                        "sequences it lacks or holds without all their aliases; "
+                        "clone the instance first to keep the original")
+    p.set_defaults(func=seqrepo_build.run_seqrepo)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="gks-refgetstore", description=__doc__,
@@ -285,6 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fetch(sub)
     _add_lock(sub)
     _add_sync(sub)
+    _add_refseqgene_history(sub)
+    _add_seqrepo(sub)
     return ap
 
 
