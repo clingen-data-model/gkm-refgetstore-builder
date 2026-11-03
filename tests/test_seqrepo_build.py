@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import file_record, lock_for_store, write_fasta
+
 from gks_refgetstore import build_lock, cli, seqrepo_build, store_census
 
 pytest.importorskip("biocommons.seqrepo")
